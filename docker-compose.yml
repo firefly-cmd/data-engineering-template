@@ -1,0 +1,116 @@
+version: "3.3"
+
+networks:
+  bridge:
+    driver: bridge
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 32181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      bridge:
+        aliases:
+          - zookeeper
+
+  kafka:
+    image: confluentinc/cp-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:32181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "29092:29092"
+    networks:
+      bridge:
+        aliases:
+          - kafka
+
+  kafka-producer:
+    build: ./kafka_producer
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BROKER_URL: "kafka:9092"  #TODO Set environment variable
+    networks:
+      bridge:
+        aliases:
+          - kafka-producer
+
+  spark-master:
+    image: apache/spark:python3
+    ports:
+      - "8080:8080"  
+      - "7077:7077"  
+    command: bash -c "/opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --ip spark-master --port 7077 --webui-port 8080 && tail -f /dev/null"
+    networks:
+      bridge:
+        aliases:
+          - spark-master
+
+  spark-worker:
+    image: apache/spark:python3
+    depends_on:
+      - spark-master
+    command: bash -c "/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077 && tail -f /dev/null"
+    networks:
+      bridge:
+        aliases:
+          - spark-worker
+
+  spark_job:
+    build: ./spark_jobs
+    depends_on:
+      - kafka
+      - spark-master
+      - spark-worker
+      - kafka-producer
+      - postgres
+    networks:
+      - bridge
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: logs
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      bridge:
+        aliases:
+          - postgres
+
+  dash_app:
+    build: ./dash_app
+    ports:
+      - "8050:8050"
+    depends_on:
+      - kafka
+      - spark-master
+      - spark-worker
+      - kafka-producer
+      - postgres
+      - spark_job
+    networks:
+      bridge:
+        aliases:
+          - dash_app
+
+
+
+
+
